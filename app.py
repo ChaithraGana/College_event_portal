@@ -60,8 +60,7 @@ def index():
         'School of Arts, Humanities & Social Sciences'
     ]
     branches = [
-        'Computer Science', 'Electronics & Communication', 
-        'Mechanical', 'Civil', 'Electrical', 'Data Science'
+        'CSE', 'CSAI', 'ECE','VLSI','Mechanical and Aerospace','civil','Biotechnology'
     ]
     return render_template('index.html', schools=schools, branches=branches)
 
