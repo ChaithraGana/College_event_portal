@@ -1,135 +1,116 @@
 import os
 import pandas as pd
-from flask import Flask, render_template, request, redirect, url_for, flash
 import mysql.connector
-from datetime import datetime
+from flask import Flask, request, jsonify, render_template
+from urllib.parse import urlparse
+import matplotlib.pyplot as plt
+import io
+import base64
 
 app = Flask(__name__)
-app.secret_key = "chanakya_university_2026"
 
-# --- 1. DATABASE CONNECTION ---
+# --- 1. DATABASE CONNECTION (Using Railway MySQL URL) ---
+# Requirement: Manage via environment variables [cite: 64]
 def get_db_connection():
-    # Priority: Railway Environment Variables -> Local Defaults
-    try:
-        return mysql.connector.connect(
-            host=os.getenv('MYSQLHOST', 'localhost'),
-            user=os.getenv('MYSQLUSER', 'root'),
-            password=os.getenv('MYSQLPASSWORD', ''),
-            database=os.getenv('MYSQLDATABASE', 'chanakya_db'),
-            port=int(os.getenv('MYSQLPORT', 3306))
-        )
-    except mysql.connector.Error as err:
-        print(f"Error: {err}")
-        return None
-
-# --- 2. DATA PROCESSING & NORMALIZATION LAYER (Section 2.3) ---
-def process_and_clean_metrics(df):
-    """
-    Cleans and standardizes data before it reaches the dashboard.
-    Handles Requirement 2.3: Handling nulls and normalization.
-    """
-    if df.empty:
-        return df
-
-    # A. Handling Nulls
-    df['venue'] = df['venue'].fillna('Main Campus')
-    df['organizer_name'] = df['organizer_name'].fillna('University Coordinator')
-    df['branch'] = df['branch'].fillna('N/A')
-
-    # B. Normalization: Standardize naming conventions
-    # Ensures 'school of engineering' and 'School of Engineering' are grouped together
-    df['department'] = df['department'].str.strip().str.title()
-    df['branch'] = df['branch'].str.strip().str.title()
+    db_url = os.getenv('MYSQL_URL') # Railway typically provides this
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is not set")
     
-    # C. Data Type Correction
-    df['event_date'] = pd.to_datetime(df['event_date'], errors='coerce')
+    url = urlparse(db_url)
+    return mysql.connector.connect(
+        host=url.hostname,
+        user=url.username,
+        password=url.password,
+        database=url.path[1:], 
+        port=url.port or 3306
+    )
+
+# --- 2. DATA PROCESSING & CLEANING LAYER ---
+# Requirement: Handles nulls, duplicates, and inconsistent formatting [cite: 31]
+def clean_portal_data(data):
+    # Standardize strings to Title Case and lowercase categories [cite: 31]
+    name = str(data.get('name', 'Unnamed Event')).strip().title()
+    category = str(data.get('category', 'other')).lower().strip()
     
-    # D. Deduplication
-    df = df.drop_duplicates(subset=['name', 'event_date', 'department'])
+    # Standardize categories based on project requirements [cite: 17]
+    valid_cats = ['technical', 'cultural', 'sports', 'workshop', 'other']
+    if category not in valid_cats:
+        category = 'other'
+        
+    return {
+        "main_event_id": int(data['main_event_id']),
+        "name": name,
+        "category": category,
+        "venue_id": int(data['venue_id']),
+        "event_time": data['event_time'], # Format: YYYY-MM-DD HH:MM:SS
+        "org_school_id": data.get('org_school_id'), # NULL if University-wide
+        "is_competition": bool(int(data.get('is_competition', 0))),
+        "description": str(data.get('description', '')).strip()
+    }
 
-    return df
-
-# --- 3. ROUTES: DATA ENTRY PORTAL (Section 2.1) ---
-@app.route('/')
-def index():
-    schools = [
-        'School of Engineering', 
-        'School of Law, Governance & Public Policy', 
-        'School of Mathematics & Natural Sciences', 
-        'School of Biosciences', 
-        'School of Arts, Humanities & Social Sciences'
-    ]
-    branches = [
-        'CSE', 'CSAI', 'ECE','VLSI','Mechanical and Aerospace','civil','Biotechnology'
-    ]
-    return render_template('index.html', schools=schools, branches=branches)
-
-@app.route('/submit_event', methods=['POST'])
+# --- 3. DATA ENTRY PORTAL ROUTE ---
+@app.route('/api/submit-event', methods=['POST'])
 def submit_event():
-    conn = get_db_connection()
-    if not conn:
-        return "Database Connection Failed", 500
-    
-    cursor = conn.cursor()
-    
-    # Raw Data Collection
-    name = request.form.get('event_name')
-    dept = request.form.get('department')
-    branch = request.form.get('branch') if dept == 'School of Engineering' else 'N/A'
-    category = request.form.get('category')
-    date = request.form.get('event_date')
-    venue = request.form.get('venue')
-    organizer = request.form.get('organizer')
-    
-    # SQL Insertion with Parameterized Queries (Prevents SQL Injection)
-    query = """INSERT INTO events (name, department, branch, category, event_date, venue, organizer_name) 
-               VALUES (%s, %s, %s, %s, %s, %s, %s)"""
+    raw_data = request.json
+    clean = clean_portal_data(raw_data)
     
     try:
-        cursor.execute(query, (name, dept, branch, category, date, venue, organizer))
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Requirement: Log submission timestamp for every record [cite: 27]
+        # This is handled by the 'created_at' column in your InnoDB schema
+        sql = """
+            INSERT INTO Sub_Events 
+            (main_event_id, sub_event_name, category, venue_id, event_time, organizing_school_id, is_competition, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        cursor.execute(sql, (
+            clean['main_event_id'], clean['name'], clean['category'],
+            clean['venue_id'], clean['event_time'], clean['org_school_id'],
+            clean['is_competition'], clean['description']
+        ))
+        
         conn.commit()
-    except Exception as e:
-        print(f"Insertion Error: {e}")
-    finally:
         cursor.close()
         conn.close()
-        
-    return redirect(url_for('dashboard'))
+        return jsonify({"status": "success", "message": "Cleaned data stored in Cloud DB"}), 201
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- 4. ROUTES: ANALYTICS DASHBOARD (Section 2.3) ---
-@app.route('/dashboard')
-def dashboard():
+# --- 4. ANALYTICS & VISUALIZATION LAYER ---
+# Requirement: Compute derived metrics (Participation rate, top performers, trends) [cite: 31]
+@app.route('/api/dashboard-data')
+def get_dashboard_insights():
     conn = get_db_connection()
-    if not conn:
-        return "Database Connection Failed", 500
+    
+    # Load raw data for repeatable processing [cite: 32]
+    df_p = pd.read_sql("SELECT * FROM Participants", conn)
+    df_r = pd.read_sql("SELECT * FROM Event_Registrations", conn)
+    df_se = pd.read_sql("SELECT * FROM Sub_Events", conn)
+    df_res = pd.read_sql("SELECT * FROM Competition_Results", conn)
 
-    # Load raw data from MySQL into Pandas
-    query = "SELECT * FROM events"
-    raw_df = pd.read_sql(query, conn)
+    # A. Internal vs External Ratio 
+    ratio = df_p['is_internal'].value_counts(normalize=True).to_dict()
+
+    # B. Semester Trends (Event Frequency by Month) [cite: 31, 36]
+    df_se['event_time'] = pd.to_datetime(df_se['event_time'])
+    monthly_trends = df_se.groupby(df_se['event_time'].dt.month_name()).size().to_dict()
+
+    # C. Derived Metric: Top Performers (Engagement Score) [cite: 31, 36]
+    # Weighting: 1st=10, 2nd=5, 3rd=2
+    points = {1: 10, 2: 5, 3: 2}
+    df_res['points'] = df_res['rank_position'].map(points)
+    top_scores = df_res.groupby('participant_id')['points'].sum().sort_values(ascending=False).head(5)
+    
     conn.close()
-
-    # Apply Cleaning and Normalization Layer
-    clean_df = process_and_clean_metrics(raw_df)
-
-    if clean_df.empty:
-        return render_template('dashboard.html', dept_data=[], branch_data=[], cat_data=[], total_events=0)
-
-    # Generate Actionable Insights
-    dept_stats = clean_df.groupby('department').size().reset_index(name='count').to_dict(orient='records')
-    
-    # Filter for Engineering specific branch metrics
-    eng_df = clean_df[clean_df['department'] == 'School Of Engineering']
-    branch_stats = eng_df.groupby('branch').size().reset_index(name='count').to_dict(orient='records')
-    
-    cat_stats = clean_df.groupby('category').size().reset_index(name='count').to_dict(orient='records')
-    total_events = len(clean_df)
-
-    return render_template('dashboard.html', 
-                           dept_data=dept_stats,
-                           branch_data=branch_stats,
-                           cat_data=cat_stats,
-                           total_events=total_events)
+    return jsonify({
+        "internal_external_ratio": ratio,
+        "semester_trends": monthly_trends,
+        "top_performers": top_scores.to_dict()
+    })
 
 if __name__ == '__main__':
-    # Local Development Run
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Hosted on cloud platform, accessible via public URL [cite: 56]
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
