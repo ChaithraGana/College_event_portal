@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coordinator Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Ensures inputs in the manual entry form stack neatly */
+        #formFields input, #formFields select {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    
+    <div class="top-bar">
+        <div>
+            <h1 style="margin:0;">Coordinator Data Entry Portal</h1>
+            <p style="margin:5px 0 0 0; color:var(--text-muted);">Secure access for raw data management</p>
+        </div>
+        <a href="/logout"><button class="back-btn"><i class="fa-solid fa-right-from-bracket"></i> Logout</button></a>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><i class="fa-solid fa-database"></i><h3 style="margin:0;">Select Table</h3></div>
+        
+        <select id="table">
+            <option value="Main_Events">Main_Events</option>
+            <option value="Sub_Events">Sub_Events</option>
+            <option value="Participants">Participants</option>
+            <option value="Event_Registrations">Event_Registrations</option>
+            <option value="Competition_Results">Competition_Results</option>
+        </select>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><i class="fa-solid fa-file-csv"></i><h3 style="margin:0;">Upload CSV</h3></div>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:20px;">
+            Data will be automatically cleaned before insertion.
+        </p>
+
+        <form id="csvForm" method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".csv" required style="margin-bottom: 15px;">
+            <button type="submit" style="width: 100%;"><i class="fa-solid fa-cloud-arrow-up"></i> Upload</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><i class="fa-solid fa-keyboard"></i><h3 style="margin:0;">Manual Entry</h3></div>
+        
+        <div id="formFields"></div>
+        
+        <button onclick="submitData()" style="width: 100%;"><i class="fa-solid fa-plus"></i> Submit Record</button>
+    </div>
+
+</div>
+
+<script>
+
+// =========================
+// CHANGE FORM BASED ON TABLE
+// =========================
+document.getElementById("table").addEventListener("change", generateForm);
+
+function generateForm() {
+    let table = document.getElementById("table").value;
+    let form = document.getElementById("formFields");
+    
+     if (table === "Main_Events") {
+        form.innerHTML = `
+            <input id="main_event_id" placeholder="Main Event ID">
+            <input id="title" placeholder="Title">
+            <input id="organizing_school_id" placeholder="Organizing School ID">
+            <input id="start_date" type="date" placeholder="YYYY-MM-DD">
+            <input id="end_date" type="date" placeholder="YYYY-MM-DD">
+        `;
+    }
+    else if (table === "Sub_Events") {
+        form.innerHTML = `
+            <input id="sub_event_id" placeholder="Sub Event ID">
+            <input id="main_event_id" placeholder="Main Event ID">
+            <input id="sub_event_name" placeholder="Event Name">
+            <input id="category" placeholder="Category">
+            <label style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 5px; display: block;">Venue (ID - Name)</label>
+            <select id="venue_id">
+                <option value="">-- Select Venue --</option>
+                <option value="1">1 - Auditorium</option>
+                <option value="2">2 - Main Ground A</option>
+                <option value="3">3 - Seminar Hall</option>
+                <option value="4">4 - Lab-UG </option>
+                <option value="5">5 - Sports complex </option>
+            </select>
+            <input id="event_time" type="datetime-local" placeholder="YYYY-MM-DD HH:MM:SS">
+            <input id="organizing_school_id" placeholder="School ID">
+            <input id="is_competition" placeholder="1 for Competition, 0 for Non-Competition">
+            <input id="description" placeholder="Description">
+        `;
+    }
+    else if (table === "Participants") {
+        form.innerHTML = `
+            <input id="participant_id" placeholder="Participant ID">
+            <input id="roll_number" placeholder="Roll Number">
+            <input id="full_name" placeholder="Full Name">
+            <input id="sb_id" placeholder="Branch ID">
+            <input id="year_of_study" placeholder="Year">
+            <input id="is_internal" placeholder="1 for Internal, 0 for External">
+        `;
+    }
+    else if (table === "Event_Registrations") {
+        form.innerHTML = `
+            <input id="registration_id" placeholder="Registration ID">
+            <input id="sub_event_id" placeholder="Sub Event ID">
+            <input id="participant_id" placeholder="Participant ID">
+            <input id="registration_date" type="date" placeholder="YYYY-MM-DD">
+        `;
+    }
+    else if (table === "Competition_Results") {
+        form.innerHTML = `
+            <input id="result_id" placeholder="Result ID">
+            <input id="sub_event_id" placeholder="Sub Event ID">
+            <input id="participant_id" placeholder="Winner ID">
+            <input id="rank_position" placeholder="Rank (1,2,3)">
+            <input id="award_prize" placeholder="Prize">
+        `;
+    }
+}
+
+// =========================
+// CSV UPLOAD
+// =========================
+document.getElementById("csvForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+
+    let table = document.getElementById("table").value;
+    let formData = new FormData(this);
+
+    fetch(`/upload/${table}`, {
+        method: "POST",
+        body: formData
+    })
+    .then(res => res.text())
+    .then(data => {
+        alert(data);
+        this.reset(); // Clear the file input after upload
+    });
+});
+
+// =========================
+// MANUAL INSERT
+// =========================
+function submitData() {
+    let table = document.getElementById("table").value;
+    
+    // FIX: Added '#formFields select' so the Venue dropdown is actually submitted
+    let inputs = document.querySelectorAll("#formFields input, #formFields select");
+
+    let data = {};
+    inputs.forEach(input => {
+        // Only submit fields that have been filled out (allows Auto-Increment to work)
+        if (input.value.trim() !== "") {
+            data[input.id] = input.value;
+        }
+    });
+
+    fetch(`/insert/${table}`, {
+        method: "POST",
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(data => {
+        alert(data.message);
+        // Clear inputs upon successful submission
+        inputs.forEach(input => input.value = "");
+    })
+    .catch(err => {
+        alert("Failed to submit data.");
+        console.error(err);
+    });
+}
+
+// Initialize form
+generateForm();
+
+</script>
+
+</body>
+</html>

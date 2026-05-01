@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Stakeholder Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="top-bar">
+            <div><h1 style="margin:0;">Intelligence Dashboard</h1><p style="margin:5px 0 0 0; color:var(--text-muted);">Analytics & Student Lookup</p></div>
+            <button class="back-btn" onclick="window.location.href='/'"><i class="fa-solid fa-arrow-left"></i> Home</button>
+        </div>
+
+        <div class="filter-bar">
+            <div class="form-group"><label>Start Date</label><input type="date" id="filterStart"></div>
+            <div class="form-group"><label>End Date</label><input type="date" id="filterEnd"></div>
+            <div class="form-group">
+                <label>Category</label>
+                <select id="filterCategory">
+                <option value="all">All Categories</option> 
+                <option value="technical">Technical</option>
+                <option value="cultural">Cultural</option>
+                <option value="sports">Sports</option>
+                <option value="workshop">Workshop</option>
+                </select>
+            </div>
+            <button onclick="loadAnalytics()"><i class="fa-solid fa-filter"></i> Apply Filters</button>
+        </div>
+
+        <div class="grid-2">
+            <div class="card"><div class="card-header"><i class="fa-solid fa-users"></i><h3>Participants per School</h3></div><div class="chart-container"><canvas id="chart-participants"></canvas></div></div>
+            <div class="card"><div class="card-header"><i class="fa-solid fa-medal"></i><h3>Winners per School</h3></div><div class="chart-container"><canvas id="chart-winners"></canvas></div></div>
+        </div>
+
+        <div class="grid-2">
+            <div class="card"><div class="card-header"><i class="fa-solid fa-chart-pie"></i><h3>Category Breakdown</h3></div><div class="chart-container"><canvas id="chart-category"></canvas></div></div>
+            <div class="card"><div class="card-header"><i class="fa-solid fa-fire"></i><h3>Top 10 Most Popular Events</h3></div><div class="chart-container"><canvas id="chart-popular"></canvas></div></div>
+        </div>
+
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header"><i class="fa-solid fa-trophy"></i><h3>Top 3 Active Students</h3></div>
+                <div id="top-students-list"></div>
+            </div>
+            <div class="card">
+                <div class="card-header"><i class="fa-solid fa-calendar-days"></i><h3>Event Schedule</h3></div>
+                <div id="event-schedule-list" style="max-height: 300px; overflow-y: auto;"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><i class="fa-solid fa-magnifying-glass"></i><h3>Student Results Lookup</h3></div>
+            <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <input type="text" id="rollInput" placeholder="Enter Roll Number (e.g., 2026BT001)" style="max-width: 400px;">
+                <button onclick="lookupStudent()">Search</button>
+            </div>
+            <div id="lookup-results"></div>
+        </div>
+    </div>
+
+    <script>
+        let charts = {};
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Inter', sans-serif";
+
+        function renderChart(id, type, label, labels, data, colors, horizontal=false) {
+            if(charts[id]) charts[id].destroy(); // Destroy previous instance to fix filter bugs
+            charts[id] = new Chart(document.getElementById(id).getContext('2d'), {
+                type: type, data: { labels: labels, datasets: [{ label: label, data: data, backgroundColor: colors, borderRadius: type==='bar'?4:0 }] },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: horizontal ? 'y' : 'x', plugins: { legend: { display: type==='doughnut' } }, scales: type === 'doughnut' ? {} : { y: { grid: { color: '#334155' } }, x: { grid: { display: false } } } }
+            });
+        }
+
+        function loadAnalytics() {
+            const start = document.getElementById('filterStart').value || '';
+            const end = document.getElementById('filterEnd').value || '';
+            const cat = document.getElementById('filterCategory').value;
+
+            fetch(`/api/analytics?start_date=${start}&end_date=${end}&category=${cat}`)
+                .then(res => res.json())
+                .then(data => {
+                    const topDiv = document.getElementById('top-students-list'); topDiv.innerHTML = '';
+                    const medals = ['#fbbf24', '#cbd5e1', '#b45309'];
+                    data.top_students.forEach((s, i) => topDiv.innerHTML += `<div class="leaderboard-item"><div class="leaderboard-rank" style="color:${medals[i]}"><i class="fa-solid fa-medal"></i></div><div class="leaderboard-info"><div class="leaderboard-name">${s.full_name}</div><div class="leaderboard-roll">${s.roll_number}</div></div><div style="color:var(--gold); font-weight:bold;">${s.participation_count} Events</div></div>`);
+                    
+                    renderChart('chart-participants', 'bar', 'Participants', data.school_participants.map(d=>d.school_name||'Uni'), data.school_participants.map(d=>d.total_participations), '#3b82f6');
+                    renderChart('chart-winners', 'bar', 'Wins', data.school_winners.map(d=>d.school_name||'Uni'), data.school_winners.map(d=>d.total_wins), '#10b981');
+                    renderChart('chart-category', 'doughnut', 'Category', data.category_breakdown.map(d=>d.category), data.category_breakdown.map(d=>d.event_count), ['#fbbf24', '#f59e0b', '#d97706', '#b45309']);
+                    renderChart('chart-popular', 'bar', 'Registrations', data.popular_events.map(d=>d.sub_event_name), data.popular_events.map(d=>d.total_registrations), 'rgba(59, 130, 246, 0.8)', true);
+                });
+        }
+
+        function lookupStudent() {
+            const roll = document.getElementById('rollInput').value;
+            if(!roll) return;
+            const resDiv = document.getElementById('lookup-results'); resDiv.innerHTML = "Searching...";
+            fetch(`/api/student_lookup/${roll}`).then(res => res.json()).then(data => {
+                if(data.message) { resDiv.innerHTML = `<p style="color:var(--danger)">${data.message}</p>`; return; }
+                let html = '<h4 style="margin-top:0;">Competition Placements</h4><table><tr><th>Event</th><th>Rank</th><th>Prize</th></tr>';
+                data.competition_results.forEach(r => html += `<tr><td>${r.sub_event_name}</td><td><span class="badge">${r.rank_position}</span></td><td>${r.award_prize||'-'}</td></tr>`);
+                html += '</table><h4 style="margin-top:20px;">Participation History</h4><table><tr><th>Event</th><th>Category</th></tr>';
+                data.participation_history.forEach(r => html += `<tr><td>${r.sub_event_name}</td><td style="text-transform:capitalize;">${r.category}</td></tr>`);
+                resDiv.innerHTML = html + '</table>';
+            }).catch(() => resDiv.innerHTML = `<p style="color:var(--danger)">Not found.</p>`);
+        }
+
+        function loadSchedule() {
+            fetch('/api/events/schedule').then(res => res.json()).then(data => {
+                let html = '<h4 style="color:var(--success); margin-top:0;">Upcoming Events</h4>';
+                data.upcoming_events.forEach(e => html += `<div style="padding:10px; border-left:3px solid var(--success); background:rgba(17,24,39,0.5); margin-bottom:10px;"><strong>${e.name}</strong><br><small style="color:var(--text-muted)">${e.status}</small></div>`);
+                html += '<h4 style="margin-top:20px;">Past Events</h4>';
+                data.past_events.forEach(e => html += `<div style="padding:10px; border-left:3px solid var(--border-color); background:rgba(17,24,39,0.5); margin-bottom:10px;"><strong style="color:var(--text-muted)">${e.name}</strong><br><small style="color:var(--text-muted)">Participants count: ${e.count}</small></div>`);
+                document.getElementById('event-schedule-list').innerHTML = html;
+            });
+        }
+        
+        loadAnalytics(); loadSchedule();
+    </script>
+</body>
+</html>
